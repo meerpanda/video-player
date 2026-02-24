@@ -1,0 +1,216 @@
+#   
+<!DOCTYPE html>  
+<html lang="ja">  
+<head>  
+  <meta charset="UTF-8">  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+  <title>インタラクティブ・リバース・ビデオプレイヤー</title>  
+  <style>  
+    /* リセットと基本レイアウト */  
+    body {  
+      margin: 0;  
+      padding: 0;  
+      background-color: #121212;  
+      color: #ffffff;  
+      font-family: 'Helvetica Neue', Arial, sans-serif;  
+      display: flex;  
+      flex-direction: column;  
+      align-items: center;  
+      justify-content: center;  
+      min-height: 100vh;  
+      overflow: hidden;  
+    }  
+  
+    h1 {  
+      font-size: 1.2rem;  
+      margin-bottom: 20px;  
+    }  
+  
+    /* ファイルアップロード部分 */  
+    .upload-wrapper {  
+      margin-bottom: 20px;  
+      z-index: 10;  
+    }  
+      
+    input[type="file"] {  
+      background: #333;  
+      padding: 10px;  
+      border-radius: 4px;  
+      cursor: pointer;  
+    }  
+  
+    /* ビデオコンテナ（イベント検知領域） */  
+    #video-container {  
+      position: relative;  
+      width: 100%;  
+      max-width: 800px;  
+      aspect-ratio: 16 / 9;  
+      background-color: #000;  
+      border: 2px solid #444;  
+      border-radius: 8px;  
+      overflow: hidden;  
+      display: none; /* 初期状態は非表示 */  
+      cursor: pointer;  
+        
+      /* スマホ長押し時のデフォルト挙動（テキスト選択やメニュー表示）を無効化 */  
+      user-select: none;  
+      -webkit-user-select: none;  
+      -webkit-touch-callout: none;  
+    }  
+  
+    video {  
+      width: 100%;  
+      height: 100%;  
+      object-fit: contain;  
+      /* ビデオ要素自体がマウスイベントを奪わないようにする */  
+      pointer-events: none;   
+    }  
+  
+    /* ユーザーへの操作ガイド */  
+    #instruction {  
+      position: absolute;  
+      top: 50%;  
+      left: 50%;  
+      transform: translate(-50%, -50%);  
+      background: rgba(0, 0, 0, 0.7);  
+      padding: 15px 25px;  
+      border-radius: 8px;  
+      font-size: 1.2rem;  
+      font-weight: bold;  
+      pointer-events: none;  
+      transition: opacity 0.2s ease;  
+    }  
+  
+    /* 再生中のガイド非表示用クラス */  
+    .is-playing #instruction {  
+      opacity: 0;  
+    }  
+  </style>  
+</head>  
+<body>  
+  
+  <h1>インタラクティブ・ビデオプレイヤー</h1>  
+    
+  <div class="upload-wrapper">  
+    <input type="file" id="video-upload" accept="video/*">  
+  </div>  
+  
+  <div id="video-container">  
+    <video id="player" playsinline></video>  
+    <div id="instruction">長押しで再生<br><span style="font-size: 0.9rem; font-weight: normal;">(離すと逆再生)</span></div>  
+  </div>  
+  
+  <script>  
+    document.addEventListener('DOMContentLoaded', () => {  
+      const uploadInput = document.getElementById('video-upload');  
+      const videoContainer = document.getElementById('video-container');  
+      const video = document.getElementById('player');  
+  
+      let isPlayingForward = false;  
+      let rewindAnimationId = null;  
+      let lastTime = null;  
+  
+      // 1. ファイル読み込み処理  
+      uploadInput.addEventListener('change', (event) => {  
+        const file = event.target.files[0];  
+        if (!file) return;  
+  
+        // 既存のオブジェクトURLがあれば解放  
+        if (video.src) {  
+          URL.revokeObjectURL(video.src);  
+        }  
+  
+        const objectUrl = URL.createObjectURL(file);  
+        video.src = objectUrl;  
+        videoContainer.style.display = 'block';  
+          
+        // 動画読み込み完了時の初期化（アイドル状態＝逆再生待機 に移行）  
+        video.addEventListener('loadedmetadata', () => {  
+          startRewind();  
+        }, { once: true });  
+      });  
+  
+      // 3. 長押し操作 (正再生)  
+      const startForwardPlay = (event) => {  
+        // スマホでのコンテキストメニューやスクロールを防止  
+        if (event.cancelable) {  
+          event.preventDefault();  
+        }  
+          
+        if (!video.src) return;  
+  
+        isPlayingForward = true;  
+        videoContainer.classList.add('is-playing'); // ガイドを非表示  
+  
+        // 逆再生ループをキャンセル  
+        if (rewindAnimationId) {  
+          cancelAnimationFrame(rewindAnimationId);  
+          rewindAnimationId = null;  
+        }  
+  
+        video.muted = false;  
+        video.playbackRate = 1.0;  
+          
+        // 再生開始（ブラウザの自動再生ポリシーエラー回避のためPromiseをキャッチ）  
+        const playPromise = video.play();  
+        if (playPromise !== undefined) {  
+          playPromise.catch(error => {  
+            console.warn("自動再生がブロックされました:", error);  
+          });  
+        }  
+      };  
+  
+      // 4. 離した瞬間 (逆再生再開)  
+      const startRewind = (event) => {  
+        if (event && event.cancelable) {  
+          event.preventDefault();  
+        }  
+          
+        if (!video.src) return;  
+  
+        isPlayingForward = false;  
+        videoContainer.classList.remove('is-playing'); // ガイドを再表示  
+  
+        // 正再生を停止してミュート  
+        video.pause();  
+        video.muted = true;  
+  
+        // 逆再生ループの開始  
+        lastTime = performance.now();  
+        if (!rewindAnimationId) {  
+          rewindAnimationId = requestAnimationFrame(rewindLoop);  
+        }  
+      };  
+  
+      // 2. 基本動作・逆再生ループの実装 (requestAnimationFrame)  
+      const rewindLoop = (currentTimeStamp) => {  
+        if (isPlayingForward) return; // 正再生中ならループを抜ける  
+  
+        // 前フレームからの経過時間(秒)を計算し、デバイスのFPSに依存せず一定速度で逆再生する  
+        const deltaSeconds = (currentTimeStamp - lastTime) / 1000;  
+        lastTime = currentTimeStamp;  
+  
+        if (video.currentTime > 0) {  
+          // 現在時間から経過時間を引く（0未満にならないようMath.maxを使用）  
+          video.currentTime = Math.max(0, video.currentTime - deltaSeconds);  
+          rewindAnimationId = requestAnimationFrame(rewindLoop);  
+        } else {  
+          // 0秒に到達したらアニメーションを停止  
+          rewindAnimationId = null;  
+        }  
+      };  
+  
+      // イベントリスナーの登録 (PC・スマホ両対応、領域外ケア含む)  
+      // マウス操作  
+      videoContainer.addEventListener('mousedown', startForwardPlay);  
+      videoContainer.addEventListener('mouseup', startRewind);  
+      videoContainer.addEventListener('mouseleave', startRewind);  
+  
+      // タッチ操作 (passive: false を指定し preventDefault を有効化)  
+      videoContainer.addEventListener('touchstart', startForwardPlay, { passive: false });  
+      videoContainer.addEventListener('touchend', startRewind, { passive: false });  
+      videoContainer.addEventListener('touchcancel', startRewind, { passive: false });  
+    });  
+  </script>  
+</body>  
+</html>  
